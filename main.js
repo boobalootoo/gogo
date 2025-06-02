@@ -1,74 +1,58 @@
-let map = L.map('map').setView([51.505, -0.09], 14); // Center somewhere typical
-
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; OpenStreetMap contributors'
+const map = L.map('map').setView([51.3, -0.7], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 18
 }).addTo(map);
 
-let geojsonData;
-let pathLayer;
-let start = null, end = null;
+const drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
 
-fetch('paths.geojson')
-  .then(res => res.json())
-  .then(data => {
-    geojsonData = data;
-    pathLayer = L.geoJSON(data, {
-      style: { color: '#888' }
-    }).addTo(map);
+const drawControl = new L.Control.Draw({
+  draw: {
+    polygon: false,
+    marker: false,
+    circle: false,
+    circlemarker: false,
+    polyline: false
+  },
+  edit: { featureGroup: drawnItems }
+});
+map.addControl(drawControl);
+
+map.on(L.Draw.Event.CREATED, async function (event) {
+  drawnItems.clearLayers();
+  const layer = event.layer;
+  drawnItems.addLayer(layer);
+
+  const bounds = layer.getBounds();
+  const [south, west] = [bounds.getSouth(), bounds.getWest()];
+  const [north, east] = [bounds.getNorth(), bounds.getEast()];
+
+  const query = `
+    [out:json][timeout:25];
+    (
+      way["highway"~"footway|path|track|bridleway"](${south},${west},${north},${east});
+    );
+    out body;
+    >;
+    out skel qt;
+  `.trim();
+
+  const url = "https://overpass-api.de/api/interpreter";
+  const response = await fetch(url, {
+    method: "POST",
+    body: query,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" }
   });
 
-map.on('click', function (e) {
-  if (!geojsonData) return;
+  const data = await response.json();
+  const geojson = osmtogeojson(data);
 
-  const nearest = findNearestPoint(e.latlng, geojsonData);
-  if (!nearest) return;
-
-  L.circleMarker(nearest, { radius: 6, color: 'blue' }).addTo(map);
-
-  if (!start) {
-    start = nearest;
-  } else if (!end) {
-    end = nearest;
-    const route = findRoute(start, end, geojsonData);
-    if (route) {
-      L.geoJSON(route, { style: { color: 'red', weight: 4 } }).addTo(map);
-    }
-  } else {
-    start = nearest;
-    end = null;
-    map.eachLayer(layer => {
-      if (layer instanceof L.CircleMarker || layer.options?.style?.color === 'red') map.removeLayer(layer);
-    });
-  }
+  L.geoJSON(geojson, {
+    style: { color: 'green', weight: 2 }
+  }).addTo(map);
 });
 
-function findNearestPoint(latlng, geojson) {
-  let minDist = Infinity, closestPoint = null;
-
-  geojson.features.forEach(f => {
-    f.geometry.coordinates.forEach(coord => {
-      const point = L.latLng(coord[1], coord[0]);
-      const dist = latlng.distanceTo(point);
-      if (dist < minDist) {
-        minDist = dist;
-        closestPoint = point;
-      }
-    });
-  });
-
-  return closestPoint;
-}
-
-// Extremely simple routing: returns all lines containing start and end
-function findRoute(start, end, geojson) {
-  return {
-    type: 'FeatureCollection',
-    features: geojson.features.filter(f => {
-      const coords = f.geometry.coordinates;
-      const containsStart = coords.some(c => L.latLng(c[1], c[0]).distanceTo(start) < 5);
-      const containsEnd = coords.some(c => L.latLng(c[1], c[0]).distanceTo(end) < 5);
-      return containsStart || containsEnd;
-    })
-  };
-}
+// include osmtogeojson
+const script = document.createElement("script");
+script.src = "https://unpkg.com/osmtogeojson@3.0.0/osmtogeojson.js";
+document.body.appendChild(script);
