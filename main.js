@@ -1,4 +1,4 @@
-const map = L.map('map').setView([51.3, -0.7], 9);
+const map = L.map('map').setView([51.3, 0.7], 9);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18
 }).addTo(map);
@@ -8,51 +8,51 @@ map.addLayer(drawnItems);
 
 const drawControl = new L.Control.Draw({
   draw: {
-    polygon: false,
     marker: false,
+    polyline: false,
+    polygon: false,
     circle: false,
     circlemarker: false,
-    polyline: false
+    rectangle: true
   },
-  edit: { featureGroup: drawnItems }
+  edit: { featureGroup: drawnItems, edit: false, remove: false }
 });
 map.addControl(drawControl);
 
-map.on(L.Draw.Event.CREATED, async function (event) {
+map.on(L.Draw.Event.CREATED, function (event) {
   drawnItems.clearLayers();
-  const layer = event.layer;
-  drawnItems.addLayer(layer);
+  drawnItems.addLayer(event.layer);
+  const bounds = event.layer.getBounds();
+  loadPaths(bounds);
+});
 
-  const bounds = layer.getBounds();
-  const [south, west] = [bounds.getSouth(), bounds.getWest()];
-  const [north, east] = [bounds.getNorth(), bounds.getEast()];
-
+function loadPaths(bounds) {
   const query = `
     [out:json][timeout:25];
     (
-      way["highway"~"footway|path|track|bridleway"](${south},${west},${north},${east});
+      way["highway"~"footway|path|track|bridleway"]
+      (${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});
     );
     out body;
     >;
     out skel qt;
-  `.trim();
+  `;
 
-  const url = "https://overpass-api.de/api/interpreter";
-  const response = await fetch(url, {
-    method: "POST",
-    body: query,
-    headers: { "Content-Type": "application/x-www-form-urlencoded" }
+  fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: query
+  })
+  .then(res => res.json())
+  .then(data => {
+    const nodes = {};
+    data.elements.filter(el => el.type === 'node').forEach(el => {
+      nodes[el.id] = [el.lat, el.lon];
+    });
+
+    const paths = data.elements.filter(el => el.type === 'way');
+    paths.forEach(path => {
+      const latlngs = path.nodes.map(nodeId => nodes[nodeId]);
+      L.polyline(latlngs, { color: 'green' }).addTo(map);
+    });
   });
-
-  const data = await response.json();
-  const geojson = osmtogeojson(data);
-
-  L.geoJSON(geojson, {
-    style: { color: 'green', weight: 2 }
-  }).addTo(map);
-});
-
-// include osmtogeojson
-const script = document.createElement("script");
-script.src = "https://unpkg.com/osmtogeojson@3.0.0/osmtogeojson.js";
-document.body.appendChild(script);
+}
