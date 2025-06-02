@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OSM Paths with Satellite Map</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/osmtogeojson@3.0.0/osmtogeojson.js"></script>
+  <script>
+    const map = L.map('map').setView([51.505, -0.09], 13);
+
+    // Base layers
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    });
+
+    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/' +
+      'World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri'
+    });
+
+    osm.addTo(map);
+
+    const baseMaps = {
+      "OpenStreetMap": osm,
+      "Satellite": satellite
+    };
+
+    // Supported path types and color map
+    const pathTypes = ['footway', 'path', 'track', 'cycleway', 'bridleway', 'steps'];
+    const pathColors = {
+      footway: '#1f77b4',
+      path: '#2ca02c',
+      track: '#d62728',
+      cycleway: '#9467bd',
+      bridleway: '#8c564b',
+      steps: '#e377c2'
+    };
+
+    const overlays = {};       // For control box
+    const pathLayers = {};     // Actual GeoJSON layers
+
+    const layerControl = L.control.layers(baseMaps, overlays).addTo(map);
+
+    function fetchPaths() {
+      const bounds = map.getBounds();
+      const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+
+      pathTypes.forEach(type => {
+        // Remove old layer
+        if (pathLayers[type]) {
+          map.removeLayer(pathLayers[type]);
+          layerControl.removeLayer(pathLayers[type]);
+        }
+
+        const query = `
+          [out:json][timeout:25];
+          (
+            way["highway"="${type}"](${bbox});
+          );
+          out body;
+          >;
+          out skel qt;
+        `;
+
+        fetch('https://overpass-api.de/api/interpreter', {
+          method: 'POST',
+          body: query.trim()
+        })
+        .then(res => res.json())
+        .then(data => {
+          const geojson = osmtogeojson(data);
+          const layer = L.geoJSON(geojson, {
+            style: { color: pathColors[type], weight: 2 }
+          });
+
+          pathLayers[type] = layer;
+          layerControl.addOverlay(layer, type);
+          layer.addTo(map);
+        })
+        .catch(err => console.error("Error loading type:", type, err));
+      });
+    }
+
+    // Fetch paths initially and on move
+    map.on('moveend', fetchPaths);
+    fetchPaths();
+  </script>
+</body>
+</html>
