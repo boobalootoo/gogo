@@ -1,19 +1,103 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Path Explorer</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw/dist/leaflet.draw.css"/>
+  <title>OSM Paths Viewer</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
   <style>
-    #map { height: 100vh; }
+    html, body, #map { height: 100%; margin: 0; }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet-draw/dist/leaflet.draw.js"></script>
-  <script src="main.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([51.505, -0.09], 13);
+
+    // Base layers
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OSM contributors'
+    });
+
+    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/' +
+      'World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri'
+    });
+
+    const baseMaps = {
+      "OpenStreetMap": osm,
+      "Satellite": satellite
+    };
+
+    // Path types
+    const pathTypes = ['footway', 'path', 'track', 'cycleway', 'bridleway', 'steps'];
+
+    const pathLayers = {};
+
+    // Add layer control
+    osm.addTo(map);
+    const overlays = {};
+    const layerControl = L.control.layers(baseMaps, overlays).addTo(map);
+
+    function fetchPaths() {
+      const bounds = map.getBounds();
+      const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+
+      pathTypes.forEach(type => {
+        const query = `
+          [out:json][timeout:25];
+          (
+            way["highway"="${type}"](${bbox});
+          );
+          out body;
+          >;
+          out skel qt;
+        `;
+
+        fetch('https://overpass-api.de/api/interpreter', {
+          method: 'POST',
+          body: query
+        })
+        .then(res => res.json())
+        .then(data => {
+          const geojson = osmtogeojson(data);
+          if (pathLayers[type]) {
+            map.removeLayer(pathLayers[type]);
+            layerControl.removeLayer(pathLayers[type]);
+          }
+          pathLayers[type] = L.geoJSON(geojson, {
+            style: { color: getColor(type), weight: 2 }
+          });
+          layerControl.addOverlay(pathLayers[type], type);
+          pathLayers[type].addTo(map);
+        });
+      });
+    }
+
+    function getColor(type) {
+      const colors = {
+        footway: '#1f77b4',
+        path: '#2ca02c',
+        track: '#d62728',
+        cycleway: '#9467bd',
+        bridleway: '#8c564b',
+        steps: '#e377c2'
+      };
+      return colors[type] || '#000';
+    }
+
+    // Convert OSM JSON to GeoJSON
+    const script = document.createElement('script');
+    script.src = "https://unpkg.com/osmtogeojson@3.0.0/osmtogeojson.js";
+    script.onload = () => {
+      fetchPaths();
+      map.on('moveend', fetchPaths);
+    };
+    document.head.appendChild(script);
+  </script>
 </body>
 </html>
